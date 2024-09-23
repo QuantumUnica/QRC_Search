@@ -1,4 +1,5 @@
 import os
+import psutil
 import json
 import tempfile
 from time import time
@@ -108,20 +109,20 @@ def sign(t):
     s = torch.sum(t == 1).item()
     return s
 
-def optimize(rank, world_size, n_attempts, N, seeds, batch_size, progress_counter, prog_counter_lock, file_lock, total_violations, total_high_violations, violation_lock):
+def optimize(rank, world_size, dev, n_attempts, N, seeds, batch_size, progress_counter, prog_counter_lock, file_lock, total_violations, total_high_violations, violation_lock):
     """
     Optimization function executed by a process.
     Each process will handle a different range of attempts.
     """
     setup(rank, world_size)
-    device = torch.device("cuda", rank) if rank in range(torch.cuda.device_count()) else torch.device("cpu") # Assign correct device
-    print(device)
-
+    device = torch.device("cuda", rank) if rank in range(world_size) and dev!="cpu" else torch.device("cpu") # Assign correct device
+    
+    # Connections of the Quantum Device
     connections = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8), (8, 9), (9,0)] # Full connectivity
 
     # Get the range of attempts for this rank
     start_attempt, end_attempt = get_attempt_range(rank, world_size, n_attempts)
-    print(f"Rank {rank} processing attempts from {start_attempt} to {end_attempt}")
+    print(f"{device} - Rank {rank} is processing attempts from {start_attempt} to {end_attempt}")
 
     batch_dictionaries = []
     batch_high_violations = []
@@ -136,7 +137,7 @@ def optimize(rank, world_size, n_attempts, N, seeds, batch_size, progress_counte
         noise_model.add_noise(Depolarizing(0.00007), GateCriteria(Gate.T))
         noise_model.add_noise(Depolarizing(0.0009), GateCriteria(Gate.CNot))
 
-        random_circuit = QRC_Garnet(N, D=depth, noise_model=noise_model, max_gates=2, connections=connections, Clifford=True)
+        random_circuit = QRC_Garnet(N, D=depth, max_gates=2, connections=connections, Clifford=True)
 
         RHO = torch.from_numpy(random_circuit['Ideal RHO']).type(torch.complex64).to(device)
         circuit = random_circuit["Circuit Without Density Matrix"]
@@ -235,12 +236,6 @@ def optimize(rank, world_size, n_attempts, N, seeds, batch_size, progress_counte
 
 
 
-"""def save_to_tempfile(data, filename):
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.json', dir='Results', mode='w') as tmpfile:
-        json.dump(data, tmpfile)
-    os.rename(tmpfile.name, filename)"""
-
-
 def save_to_tempfile(data, filename):
     """
     Save the data to a file by appending new data to existing content.
@@ -265,7 +260,21 @@ def save_to_tempfile(data, filename):
 
 
 if __name__ == "__main__":
-    world_size = int(os.getenv('WORLD_SIZE', torch.cuda.device_count()))    # Total number of GPUs/processes across all nodes
+
+    dev = "gpu" # TODO allow parameters from command line
+    
+    n_cpu = psutil.cpu_count(logical=False)
+    n_cpu_threads = psutil.cpu_count(logical=True)
+    n_gpu = torch.cuda.device_count()
+
+    if dev == "cpu":
+        torch.set_num_threads(n_cpu_threads)
+        torch.set_num_interop_threads(n_cpu_threads)
+    
+    print(f"Num torch threads: {torch.get_num_threads()}")
+    print(f"Num torch interop threads: {torch.get_num_interop_threads()}")
+
+    world_size = int(os.getenv('WORLD_SIZE', n_cpu if dev == "cpu" else n_gpu))    # Total number of GPUs/processes across all nodes
     master_addr = os.getenv('MASTER_ADDR', '127.0.0.1')
     master_port = os.getenv('MASTER_PORT', '12355')
 
@@ -273,10 +282,10 @@ if __name__ == "__main__":
     os.environ['MASTER_ADDR'] = master_addr
     os.environ['MASTER_PORT'] = master_port
 
-    N = 4                  # Number of qubits
+    N = 10                  # Number of qubits
     seeds = 10              # Number of angle configurations for each quantum state
-    NATTEMPTS = 35000       # Total number of state analysis attempts
-    save_batch_size = 10    # used to save every 'save_batch_size' attempts
+    NATTEMPTS = 100000        # Total number of state analysis attempts
+    save_batch_size = 100    # used to save every 'save_batch_size' attempts
 
     # Violation criteria
     print("Quantum Limit: ", 2**(N-1)*np.sqrt(2))
@@ -295,7 +304,7 @@ if __name__ == "__main__":
 
         overall_start_time = time()
 
-        mp.spawn(optimize, args=( world_size, NATTEMPTS, N, seeds, save_batch_size,
+        mp.spawn(optimize, args=( world_size, dev, NATTEMPTS, N, seeds, save_batch_size,
                                     progress_counter, prog_counter_lock, file_lock,
                                     total_violations, total_high_violations, violation_lock),
                                     nprocs=world_size, join=True)    # Starts parallel optimization

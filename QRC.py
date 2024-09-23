@@ -8,7 +8,7 @@ from braket.circuits.noises import (AmplitudeDamping, BitFlip, Depolarizing,
 import random
 import math as m
 
-def QRC_Garnet(N, D, noise_model, max_gates, connections, Clifford):
+def QRC_Garnet(N, D, max_gates, connections, Clifford, noise_model=None):
     # Define gate names
     Gate_Names_1q = ['prx']  # One-qubit gate
     Gate_Names_2q = ['cz']   # Two-qubit gate
@@ -117,8 +117,11 @@ def QRC_Garnet(N, D, noise_model, max_gates, connections, Clifford):
 #    noisy_circ = noise_model.apply(circ)
 #    circ_noise_without_density = noisy_circ.copy()
     # Compute the density matrix for the ideal circuit
+
+    backend= "braket_dm" if noise_model else "default"
+
     circ.density_matrix(target=range(N))
-    device = LocalSimulator(backend="braket_dm")
+    device = LocalSimulator(backend=backend)
     task = device.run(circ, shots=0)
     result = task.result()
     RHO = result.values[0]
