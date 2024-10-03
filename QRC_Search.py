@@ -12,60 +12,11 @@ import pandas as pd
 from operator import itemgetter
 
 import torch
-from torch.utils.data import Dataset, DataLoader
-#from torch.utils.data.distributed import DistributedSampler
-import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch import optim
 
 from QRC import QRC_Device
-
-"""
-    Math functions
-"""
-def SVL_aux(rho, N, angles, device):
-    X = torch.tensor([[0, 1], [1, 0]], dtype=torch.complex64, device=device, requires_grad=False)
-    Y = torch.tensor([[0, -1j], [1j, 0]], dtype=torch.complex64, device=device, requires_grad=False)
-    Z = torch.tensor([[1, 0], [0, -1]], dtype=torch.complex64, device=device, requires_grad=False)
-
-    OPS = []
-    l = torch.tensor([0, 1]).to(device)
-    M = torch.cartesian_prod(*[l] * N).to(device)
-
-    S = torch.zeros_like(rho, device=device)
-
-    for A in range(N):
-        alpha1 = angles[A][0]
-        alpha2 = angles[A][1]
-        beta1 = angles[A][2]
-        beta2 = angles[A][3]
-        A1 = torch.cos(alpha1) * torch.sin(beta1) * X + torch.sin(alpha1) * torch.sin(beta1) * Y + torch.cos(beta1) * Z
-        A2 = torch.cos(alpha2) * torch.sin(beta2) * X + torch.sin(alpha2) * torch.sin(beta2) * Y + torch.cos(beta2) * Z
-        OPS.append([A1, A2])
-
-    for I in M:
-        Term = [OPS[j][I[j]] for j in range(len(I))]
-        T = nu(sign(I)) * KroneckerMultiplyList(Term, device)
-        S += T   # Sum terms
-
-    Svl = torch.sqrt((torch.trace(S @ rho).real) ** 2)
-
-    return -Svl
-
-def KroneckerMultiplyList(myList, device):
-    result = torch.ones((1, 1), dtype=torch.float32, device=device)
-    for x in myList:
-        result = torch.kron(result, x.to(device, non_blocking=True))
-    return result
-
-def nu(k, branch=False):
-    nu0 = (-1) ** (k * (k + 1) / 2)
-    return nu0
-
-def sign(t):
-    s = torch.sum(t == 1).item()
-    return s
-
+from Svetlichny import svet_ineq
 
 
 
@@ -89,6 +40,8 @@ def save_to_tempfile(data, filename):
         json.dump(existing_data, tmpfile, indent=4)
     os.rename(tmpfile.name, filename)
 
+
+
 def partition_dataset(r, world_size, dataset):
     """Divide il dataset tra i processi in modo esclusivo."""
     # Calcolare la dimensione di ogni sottoinsieme
@@ -106,7 +59,9 @@ def partition_dataset(r, world_size, dataset):
 
     return dataset[start_idx:end_idx]
 
-def worker(shared_list, lock_list, lock_fSave, rank, attempts):
+
+
+def worker(shared_state_list, shared_vio, shared_hVio, lock_states, lock_vio, lock_hVio, lock_states_fSave, lock_vio_fSave, lock_hVio_fSave, rank, attempts):
 
     """Worker function that appends a dictionary to the shared list."""
     # Creazione di un dizionario con dati da aggiungere alla lista
@@ -117,12 +72,8 @@ def worker(shared_list, lock_list, lock_fSave, rank, attempts):
         depth = random.randint(10, 30)
         random_circuit = QRC_Device("Aria1", N, depth, max_gates=2)
 
-        RHO = torch.from_numpy(random_circuit['Ideal RHO']).type(torch.complex64).to(device)
+        rho = torch.from_numpy(random_circuit['Ideal RHO']).type(torch.complex64).to(device)
         circuit = random_circuit["Circuit Without Density Matrix"]
-
-        # Definition of violation level criteria
-        criterium =0.9*2**(N-1)*np.sqrt(2)
-        classical = 2**(N-1)
 
         results = []
 
@@ -133,7 +84,7 @@ def worker(shared_list, lock_list, lock_fSave, rank, attempts):
 
             def f(ang):
                 angles = [ang[4 * i:4 * (i + 1)] for i in range(N)]
-                Svl = SVL_aux(RHO, N, angles, device)
+                Svl = svet_ineq(rho, N, angles, device)
                 return Svl
 
             initial_guess = torch.tensor([2 * m.pi * random.random() for _ in range(4 * N)], requires_grad=True, device=device)
@@ -164,49 +115,64 @@ def worker(shared_list, lock_list, lock_fSave, rank, attempts):
         dict_["Circuit_Instructions"] = [str(i) for i in circuit.instructions]
         dict_["Depth"] = depth
 
-        if rank == 0:
-            print(f"Optimization time {int(end_time-start_time)} s. for {seeds} seeds", end='\r')
+        with lock_states:  
+            shared_state_list.append(dict_)
+            
+            if (len(shared_state_list) % batch_size) == 0 and rank == 0:
+                with lock_states_fSave:
+                    save_to_tempfile(list(shared_state_list), f'Results/data_{N}.json')
 
-        with lock_list:  
-            shared_list.append(dict_)
+        
+        if violation_value > classical:
+            with lock_vio:
+                shared_vio.append(dict_)
+            
+            with lock_vio_fSave:
+                save_to_tempfile(list(shared_vio), f'Results/violations_{N}.json')
+        
+        if violation_value > criterium:
+            with lock_hVio:
+                shared_hVio.append(dict_)
+            
+            with lock_hVio_fSave:
+                save_to_tempfile(list(shared_hVio), f'Results/high_violations_{N}.json')
+
+
+        if rank == 0 and (i % 2 == 0):
+            with lock_states, lock_vio, lock_hVio:
+                n_states = len(list(shared_state_list))
+                n_shared_vio = len(list(shared_vio))
+                n_shared_hVio = len(list(shared_hVio))
+
+            print("Total states: {} Violations: {} High violations: {} - Optimization time {} s. for {} seeds"
+                  .format(n_states, n_shared_vio, n_shared_hVio, int(end_time-start_time), seeds), end='\r')
             
 
-            """if violation_value > classical:
-                batch_violations.append(dict_)
-                with violation_lock:
-                    total_violations.value += 1
-            
-            if violation_value > criterium:
-                batch_high_violations.append(dict_)
-                with violation_lock:
-                    total_high_violations.value += 1"""
-
-            # Controlla se è necessario salvare
-            if (len(shared_list) % batch_size) == 0 and rank == 0:
-                with lock_fSave:
-                    save_to_tempfile(list(shared_list), f'Results/data_{N}.json')
-                
     
 
 if __name__ == "__main__":
+
     
-    gpu = True
-    N = 5                      # Number of qubits
+    gpu = False
+    N = 3                      # Number of qubits
     seeds = 5                  # Number of angle configurations for each quantum state
-    n_attempts = 100           # Total number of state analysis attempts
+    n_attempts = 300           # Total number of state analysis attempts
     batch_size = 50             # used to save every 'save_batch_size' attempts
     numbers = list(range(n_attempts))
+
+     # Definition of violation level criteria for Svetlichny
+    classical = 2**(N-1)
+    quantum_limit = classical * np.sqrt(2)
+    criterium = 0.9 * quantum_limit
 
     rank = int(os.getenv('RANK', -1))
     num_workers = int(os.getenv('WORLD_SIZE', -1))
 
-
-    if rank == 0:
-        
+    if rank == 0:     
         global_start_time = time.time()
-        print("Quantum Limit: ", 2**(N-1)*np.sqrt(2))
-        print("Our Criterium of high: ", 0.9*2**(N-1)*np.sqrt(2))
-        print("Classical Limit: ", 2**(N-1))
+        print("Quantum Limit: ", quantum_limit)
+        print("Our Criterium of high: ", criterium)
+        print("Classical Limit: ", classical)
         print()
 
         for r in range(num_workers):
@@ -214,16 +180,31 @@ if __name__ == "__main__":
             print(f"Rank {r} is processing {current_rank_attempts}")
 
     manager = mp.Manager()
-    shared_list = manager.list()
-    list_lock = manager.Lock()
-    fSave_lock = manager.Lock()
+    
+    # Shared lists
+    shared_states = manager.list()
+    shared_vio = manager.list()
+    shared_hVio = manager.list()
+    
+    # Lockers for shared lists
+    state_lock = manager.Lock()
+    vio_lock = manager.Lock()
+    hVio_lock = manager.Lock()
+    
+    # Lockers for file saving
+    states_fSave_lock = manager.Lock()
+    vio_fSave_lock = manager.Lock()
+    hVio_fSave_lock = manager.Lock()
 
     processes = []
 
     
     for r in range(num_workers):
         current_rank_attempts = partition_dataset(r, num_workers, numbers)
-        p = mp.Process(target=worker, args=(shared_list, list_lock, fSave_lock, rank, current_rank_attempts))
+        p = mp.Process(target=worker, args=(shared_states, shared_vio, shared_hVio,
+                                             state_lock, vio_lock, hVio_lock,
+                                             states_fSave_lock, vio_fSave_lock, hVio_fSave_lock,
+                                             rank, current_rank_attempts))
         processes.append(p)
         p.start()
 
@@ -233,12 +214,17 @@ if __name__ == "__main__":
 
     
     if rank==0:
-        global_end_time = time.time()
-        print(f"\n\nTotal running time {int(global_end_time-global_start_time)} s.")
-    
-    
-        print(f"Shared list content: {len(list(shared_list))}")
-        save_to_tempfile(list(shared_list), f'Results/data_{N}.json')
+        global_end_time = time.time() - global_start_time
+        total_execution_time, timeUnit = (global_end_time / 60, f" min.") if global_end_time >= 60 else (global_end_time, f" sec.")
+        print(f"\nTotal running time: {round(total_execution_time, 2)} {timeUnit}\n")
 
-        d = len(pd.read_json(f'Results/data_{N}.json'))
-        print(f"Number of States in file: {d}")
+        print(f"States: {len(list(shared_states))}")
+        print(f"Violations: {len(list(shared_vio))}")
+        print(f"High violation: {len(list(shared_hVio))}")
+    
+        save_to_tempfile(list(shared_states), f'Results/data_{N}.json')
+        save_to_tempfile(list(shared_vio), f'Results/violations_{N}.json')
+        save_to_tempfile(list(shared_vio), f'Results/high_violations_{N}.json')
+
+        d = pd.read_json(f'Results/data_{N}.json')
+        print(f"Number of States in file: {len(d)}")
