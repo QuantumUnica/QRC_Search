@@ -16,7 +16,7 @@ import torch.multiprocessing as mp
 from torch import optim
 
 from QRC import QRC_Device
-from Svetlichny import svet_ineq
+from Inequalities import get_expectation_value
 
 
 
@@ -84,7 +84,8 @@ def worker(shared_state_list, shared_vio, shared_hVio, lock_states, lock_vio, lo
 
             def f(ang):
                 angles = [ang[4 * i:4 * (i + 1)] for i in range(N)]
-                Svl = svet_ineq(rho, N, angles, device)
+                #Svl = svet_ineq(rho, N, angles, device)
+                Svl = get_expectation_value(INEQ_TYPE, rho, angles, device)
                 return Svl
 
             initial_guess = torch.tensor([2 * m.pi * random.random() for _ in range(4 * N)], requires_grad=True, device=device)
@@ -152,13 +153,13 @@ def worker(shared_state_list, shared_vio, shared_hVio, lock_states, lock_vio, lo
 
 if __name__ == "__main__":
 
-    
+    INEQ_TYPE = "svet"    
     gpu = False
     N = 3                      # Number of qubits
     seeds = 5                  # Number of angle configurations for each quantum state
     n_attempts = 300           # Total number of state analysis attempts
     batch_size = 50             # used to save every 'save_batch_size' attempts
-    numbers = list(range(n_attempts))
+    global_attempts = list(range(n_attempts))
 
      # Definition of violation level criteria for Svetlichny
     classical = 2**(N-1)
@@ -176,8 +177,8 @@ if __name__ == "__main__":
         print()
 
         for r in range(num_workers):
-            current_rank_attempts = partition_dataset(r, num_workers, numbers)
-            print(f"Rank {r} is processing {current_rank_attempts}")
+            current_rank_attempts = partition_dataset(r, num_workers, global_attempts)
+            print(f"Rank {r} is processing from {current_rank_attempts[0]} to {current_rank_attempts[-1]}")
 
     manager = mp.Manager()
     
@@ -200,7 +201,7 @@ if __name__ == "__main__":
 
     
     for r in range(num_workers):
-        current_rank_attempts = partition_dataset(r, num_workers, numbers)
+        current_rank_attempts = partition_dataset(r, num_workers, global_attempts)
         p = mp.Process(target=worker, args=(shared_states, shared_vio, shared_hVio,
                                              state_lock, vio_lock, hVio_lock,
                                              states_fSave_lock, vio_fSave_lock, hVio_fSave_lock,
