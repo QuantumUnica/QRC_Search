@@ -74,7 +74,7 @@ def mermin_iter(angs, n, device):
         prev_mn = mn
         prev_mnp = mnp
 
-    return [mn, mnp]
+    return [prev_mn, prev_mnp]
 
 '''
     Daniel Collins,Nicolas Gisin, Sandu Popescu,David Roberts and Valerio Scarani
@@ -168,13 +168,15 @@ if __name__ == "__main__":
         optimizer = torch.optim.Adam([initial_guess], lr=0.3)
 
         # Optimization loop
-        for _ in range(100):  # Number of epochs
+        for _ in range(200):  # Number of epochs
             def closure():
                 optimizer.zero_grad()
                 loss = f(initial_guess)
                 loss.backward()
                 return loss
+            
             optimizer.step(closure)
+         
             with torch.no_grad():
                 initial_guess.clamp_(0, 2 * torch.pi)   # Ensures parameters constraints
                 
