@@ -150,10 +150,9 @@ def get_limits(n_particles):
     N = n_particles
     classical = 2**(N-1)
     svet_quantum_limit = classical * np.sqrt(2)
-    criterium = 0.9 * svet_quantum_limit
 
-    print("Svet Quantum Limit: ", svet_quantum_limit)
-    print("Svet Classical Limit: ", classical)
+    #print("Svet Quantum Limit: ", svet_quantum_limit)
+    #print("Svet Classical Limit: ", classical)
 
     if N%2==0: 
         mermin_limit=2**(N-2/2)      
@@ -164,9 +163,9 @@ def get_limits(n_particles):
         compare_string = 'different from'
         parity = 'odd'
 
-    print(f"Max Mermin violation: {mermin_limit} - It's {compare_string} Svetlichny when the number of qubits {N} is {parity}")
+    #print(f"Max Mermin violation: {mermin_limit} - It's {compare_string} Svetlichny when the number of qubits {N} is {parity}")
 
-    return classical, svet_quantum_limit, criterium, mermin_limit
+    return classical, svet_quantum_limit, mermin_limit
 
 
 

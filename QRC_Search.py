@@ -3,6 +3,7 @@ warnings.filterwarnings('ignore')
 import os
 import json
 import socket
+import argparse
 import tempfile
 import time
 import numpy as np
@@ -16,7 +17,7 @@ import torch.multiprocessing as mp
 from torch import optim
 
 from QRC import QRC_Device
-from Inequalities import get_expectation_value
+import Inequalities 
 
 
 
@@ -61,19 +62,26 @@ def partition_dataset(r, world_size, dataset):
 
 
 
-def worker(shared_state_list, shared_vio, shared_hVio, lock_states, lock_vio, lock_hVio, lock_states_fSave, lock_vio_fSave, lock_hVio_fSave, rank, attempts):
+def worker(shared_state_list, shared_vio, shared_hVio, 
+           lock_states, lock_vio, lock_hVio, lock_states_fSave, lock_vio_fSave, lock_hVio_fSave, 
+           rank, 
+           attempts, 
+           gpu, INEQ_TYPE, seeds, batch_size, circ_params, criterium, classical):
 
     """Worker function that appends a dictionary to the shared list."""
     # Creazione di un dizionario con dati da aggiungere alla lista
 
     device = torch.device("cuda", rank) if gpu else torch.device("cpu") # Assign correct device
-
+    
     for i, _ in enumerate(attempts):
-        depth = random.randint(10, 30)
-        random_circuit = QRC_Device("Aria1", N, depth, max_gates=2)
+        if circ_params['D'] == None:
+            circ_params['D'] = random.randint(10, 30) 
+
+        random_circuit = QRC_Device(**circ_params)
 
         rho = torch.from_numpy(random_circuit['Ideal RHO']).type(torch.complex64).to(device)
         circuit = random_circuit["Circuit Without Density Matrix"]
+        N = int(np.log2(np.shape(random_circuit['Ideal RHO'])[0]))
 
         results = []
 
@@ -84,9 +92,8 @@ def worker(shared_state_list, shared_vio, shared_hVio, lock_states, lock_vio, lo
 
             def f(ang):
                 angles = [ang[4 * i:4 * (i + 1)] for i in range(N)]
-                #Svl = svet_ineq(rho, N, angles, device)
-                Svl = get_expectation_value(INEQ_TYPE, rho, angles, device)
-                return Svl
+                v = Inequalities.get_expectation_value(INEQ_TYPE, rho, angles, device)
+                return v
 
             initial_guess = torch.tensor([2 * m.pi * random.random() for _ in range(4 * N)], requires_grad=True, device=device)
             optimizer = optim.Adam([initial_guess], lr=0.3)
@@ -114,7 +121,7 @@ def worker(shared_state_list, shared_vio, shared_hVio, lock_states, lock_vio, lo
         dict_["Violation"] = str(violation_value)
         dict_["Angles"] = item[1].tolist()
         dict_["Circuit_Instructions"] = [str(i) for i in circuit.instructions]
-        dict_["Depth"] = depth
+        dict_["Depth"] = circ_params['D']
 
         with lock_states:  
             shared_state_list.append(dict_)
@@ -139,7 +146,7 @@ def worker(shared_state_list, shared_vio, shared_hVio, lock_states, lock_vio, lo
                 save_to_tempfile(list(shared_hVio), f'Results/high_violations_{N}.json')
 
 
-        if rank == 0 and (i % 2 == 0):
+        if rank == 0 and (i % 2 == 0):  # Update counters for progress feedback
             with lock_states, lock_vio, lock_hVio:
                 n_states = len(list(shared_state_list))
                 n_shared_vio = len(list(shared_vio))
@@ -150,28 +157,43 @@ def worker(shared_state_list, shared_vio, shared_hVio, lock_states, lock_vio, lo
             
 
     
+def main():
+    parser=argparse.ArgumentParser()
+    parser.add_argument("--q_dev", help="Select a quantum device", choices=['Clifford', 'Clifford+T', 'Aria1', 'Forte1', 'Garnet', 'Righetti'], default='Aria1')
+    parser.add_argument("--depth", help="Circuit depth", type=int, default=None)
+    parser.add_argument("--max_gates", help="Maximum number of gates per layer", type=int, default=2)
+    parser.add_argument("--ineq", help="Select Svetlichny or Mermi ineq.", choices=['svet', 'mer'], default='svet')
+    parser.add_argument("--n_qubits", help="Number of qubits", type=int, required=True)
+    parser.add_argument("--n_attempts", help="Number of attempted searches", type=int, required=True)
+    parser.add_argument("--n_seeds", help="Number of seeds for each attempt", type=int, default=5)
+    parser.add_argument("--gpu", help="Use True to use the GPU", action='store_true')
 
-if __name__ == "__main__":
+    args=parser.parse_args()
 
-    INEQ_TYPE = "svet"    
-    gpu = False
-    N = 3                      # Number of qubits
-    seeds = 5                  # Number of angle configurations for each quantum state
-    n_attempts = 300           # Total number of state analysis attempts
-    batch_size = 50             # used to save every 'save_batch_size' attempts
+
+    INEQ_TYPE = args.ineq    
+    gpu = args.gpu
+
+    N = args.n_qubits                        # Number of qubits
+    seeds = args.n_seeds                               # Number of angle configurations for each quantum state
+    n_attempts = args.n_attempts            # Total number of state analysis attempts
+    batch_size = 50                         # used to save every 'save_batch_size' attempts
+    
     global_attempts = list(range(n_attempts))
 
-     # Definition of violation level criteria for Svetlichny
-    classical = 2**(N-1)
-    quantum_limit = classical * np.sqrt(2)
-    criterium = 0.9 * quantum_limit
+     # Definition of violation level criteria for non locality
+    classical, svet_quantum_limit, mermin_limit = Inequalities.get_limits(N)
+    criterium = 0.9 * svet_quantum_limit
 
     rank = int(os.getenv('RANK', -1))
     num_workers = int(os.getenv('WORLD_SIZE', -1))
 
+    circ_params = {"device_name":args.q_dev, "N":N, "D":args.depth, "max_gates":args.max_gates}
+
     if rank == 0:     
         global_start_time = time.time()
-        print("Quantum Limit: ", quantum_limit)
+        print("Svetlichny Quantum Limit: ", svet_quantum_limit)
+        print("Mermin Limit: ", mermin_limit)
         print("Our Criterium of high: ", criterium)
         print("Classical Limit: ", classical)
         print()
@@ -205,7 +227,8 @@ if __name__ == "__main__":
         p = mp.Process(target=worker, args=(shared_states, shared_vio, shared_hVio,
                                              state_lock, vio_lock, hVio_lock,
                                              states_fSave_lock, vio_fSave_lock, hVio_fSave_lock,
-                                             rank, current_rank_attempts))
+                                             rank, current_rank_attempts, gpu, 
+                                             INEQ_TYPE, seeds, batch_size, circ_params, criterium, classical))
         processes.append(p)
         p.start()
 
@@ -229,3 +252,8 @@ if __name__ == "__main__":
 
         d = pd.read_json(f'Results/data_{N}.json')
         print(f"Number of States in file: {len(d)}")
+
+
+if __name__ == "__main__":
+
+    main()
