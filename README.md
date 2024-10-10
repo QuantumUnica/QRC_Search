@@ -22,7 +22,7 @@ The following command mustare distributed be executed in each node, changing onl
 torchrun --nproc_per_node  <number of CPU cores or GPUs in a node>
          --nnodes          <number of nodes involved in the computation>  
          --node_rank       <use 0 for the master node and 1,...,nnodes-1 for other nodes>
-         --master_addr     <master address node>
+         --master_addr     <master node IP addres>
          --master_port     <port for node comunication> 
           QRC_Search.py  <script parameters>
 
