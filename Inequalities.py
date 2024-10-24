@@ -173,19 +173,11 @@ def get_loc_violation_thresholds(n_particles):
     svet_quantum_limit = classical * np.sqrt(2)
     mermin = 1
     chsh = 2
-    #print("Svet Quantum Limit: ", svet_quantum_limit)
-    #print("Svet Classical Limit: ", classical)
 
     if N%2==0: 
         mermin_quantum_limit=2**(N-2/2)      
-        compare_string = 'equal to'
-        parity = 'even'
     if N%2!=0:
         mermin_quantum_limit=2**((N-1)/2)
-        compare_string = 'different from'
-        parity = 'odd'
-
-    #print(f"Max Mermin violation: {mermin_limit} - It's {compare_string} Svetlichny when the number of qubits {N} is {parity}")
 
     thresh = {'svet':classical,
          'svet_lim':svet_quantum_limit,
