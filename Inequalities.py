@@ -8,6 +8,23 @@ X = torch.tensor([[0, 1], [1, 0]], dtype=torch.complex64, requires_grad=False)
 Y = torch.tensor([[0, -1j], [1j, 0]], dtype=torch.complex64, requires_grad=False)
 Z = torch.tensor([[1, 0], [0, -1]], dtype=torch.complex64, requires_grad=False)
 
+def chsh(angs, device='cpu'):
+
+    X_device = X.to(device)
+    Y_device = Y.to(device)
+    Z_device = Z.to(device)
+
+    t,u,T0,U0 = angs[0] # Fst particle measurement angles
+    f,g,F0,G0 = angs[1] # Snd particle measurement angles
+
+    A1 = torch.cos(t)*torch.sin(f)*X_device + torch.sin(t)*torch.sin(f)*Y_device + torch.cos(f)*Z_device
+    A2 = torch.cos(T0)*torch.sin(F0)*X_device + torch.sin(T0)*torch.sin(F0)*Y_device + torch.cos(F0)*Z_device
+    B1 = torch.cos(u)*torch.sin(g)*X_device + torch.sin(u)*torch.sin(g)*Y_device + torch.cos(g)*Z_device
+    B2 = torch.cos(U0)*torch.sin(G0)*X_device + torch.sin(U0)*torch.sin(G0)*Y_device + torch.cos(G0)*Z_device
+    
+    bell = torch.kron(A1,B1)+torch.kron(A1,B2)+torch.kron(A2,B1)-torch.kron(A2,B2)
+    
+    return bell 
 
 def svetlichny_iter(rho, N, angles, device):
     
@@ -129,7 +146,7 @@ def mermin_rec(angs, n, device):
     of the Mermin-Kyshko or Svetlichny observables applied to a state rho"
 """
 def get_expectation_value(ineq_type, rho, angs, device):     
-    assert ineq_type in ['mer','svet'],  'ineq_type parameter must be mer or svet'
+    assert ineq_type in ['mer', 'svet', 'chsh'],  'ineq_type parameter must be mer or svet'
 
     n = int(np.log2(np.shape(rho)[0]))   # n is the number of qubits
 
@@ -141,33 +158,85 @@ def get_expectation_value(ineq_type, rho, angs, device):
     elif ineq_type == 'svet':
         sv = svetlichny_iter(rho, n, angs, device)
         expectation = -torch.sqrt((torch.trace(sv @ rho).real) ** 2)
+    
+    elif ineq_type == 'chsh':
+        bell = chsh(angs, device)
+        expectation = -torch.sqrt((torch.trace(bell @ rho).real)**2)
         
     return expectation
 
 
-def get_limits(n_particles):
+def get_loc_violation_thresholds(n_particles):
     
     N = n_particles
     classical = 2**(N-1)
     svet_quantum_limit = classical * np.sqrt(2)
-
+    mermin = 1
+    chsh = 2
     #print("Svet Quantum Limit: ", svet_quantum_limit)
     #print("Svet Classical Limit: ", classical)
 
     if N%2==0: 
-        mermin_limit=2**(N-2/2)      
+        mermin_quantum_limit=2**(N-2/2)      
         compare_string = 'equal to'
         parity = 'even'
     if N%2!=0:
-        mermin_limit=2**((N-1)/2)
+        mermin_quantum_limit=2**((N-1)/2)
         compare_string = 'different from'
         parity = 'odd'
 
     #print(f"Max Mermin violation: {mermin_limit} - It's {compare_string} Svetlichny when the number of qubits {N} is {parity}")
 
-    return classical, svet_quantum_limit, mermin_limit
+    thresh = {'svet':classical,
+         'svet_lim':svet_quantum_limit,
+         'mer':mermin,
+         'mer_lim': mermin_quantum_limit,
+         'chsh': chsh}
+
+    return thresh
 
 
+
+def test_ineq_on_state(rho, ineq_type='svet', seeds=5):
+
+    N = int(np.log2(np.shape(rho)[0]))   # n is the number of qubits
+    ineq_str_selector = ineq_type
+    
+    device = 'cpu' # torch.device('cuda', 1)
+    rho = torch.from_numpy(rho).to(torch.complex64).to(device)
+    results = []
+
+    for _ in range(seeds):
+
+        def f(ang):
+            angles = [ang[4 * i:4 * (i + 1)] for i in range(N)]
+            poly_value = get_expectation_value(ineq_str_selector, rho, angles, device)
+            return poly_value
+
+        initial_guess = torch.tensor([2 * torch.pi * random.random() for _ in range(4 * N)], dtype=torch.float64, requires_grad=True, device=device)
+        optimizer = torch.optim.Adam([initial_guess], lr=0.3)
+
+        # Optimization loop
+        for _ in range(50):  # Number of epochs
+            def closure():
+                optimizer.zero_grad()
+                loss = f(initial_guess)
+                loss.backward()
+                return loss
+            
+            optimizer.step(closure)
+         
+            with torch.no_grad():
+                initial_guess.clamp_(0, 2 * torch.pi)   # Ensures parameters constraints
+                
+        fitted_params = initial_guess
+        results.append([-f(fitted_params).to('cpu').detach().numpy(), fitted_params.to('cpu').detach().numpy()])
+
+    maximal_pair = max(enumerate(map(itemgetter(0), results)), key=itemgetter(1))
+    item = results[maximal_pair[0]]
+    violation_value = item[0]
+
+    return violation_value
 
 if __name__ == "__main__":
     

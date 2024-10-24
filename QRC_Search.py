@@ -66,7 +66,7 @@ def worker(shared_state_list, shared_vio, shared_hVio,
            lock_states, lock_vio, lock_hVio, lock_states_fSave, lock_vio_fSave, lock_hVio_fSave, 
            rank, 
            attempts, 
-           gpu, INEQ_TYPE, seeds, batch_size, circ_params, criterium, classical):
+           gpu, INEQ_TYPE, seeds, batch_size, circ_params, criterium, thres):
 
     """Worker function that appends a dictionary to the shared list."""
     # Creazione di un dizionario con dati da aggiungere alla lista
@@ -128,22 +128,22 @@ def worker(shared_state_list, shared_vio, shared_hVio,
             
             if (len(shared_state_list) % batch_size) == 0 and rank == 0:
                 with lock_states_fSave:
-                    save_to_tempfile(list(shared_state_list), f'Results/data_{N}.json')
+                    save_to_tempfile(list(shared_state_list), f'Results/data_{N}_{INEQ_TYPE}.json')
 
         
-        if violation_value > classical:
+        if violation_value > thres:
             with lock_vio:
                 shared_vio.append(dict_)
             
             with lock_vio_fSave:
-                save_to_tempfile(list(shared_vio), f'Results/violations_{N}.json')
+                save_to_tempfile(list(shared_vio), f'Results/violations_{N}_{INEQ_TYPE}.json')
         
         if violation_value > criterium:
             with lock_hVio:
                 shared_hVio.append(dict_)
             
             with lock_hVio_fSave:
-                save_to_tempfile(list(shared_hVio), f'Results/high_violations_{N}.json')
+                save_to_tempfile(list(shared_hVio), f'Results/high_violations_{N}_{INEQ_TYPE}.json')
 
 
         if rank == 0 and (i % 2 == 0):  # Update counters for progress feedback
@@ -182,8 +182,11 @@ def main():
     global_attempts = list(range(n_attempts))
 
      # Definition of violation level criteria for non locality
-    classical, svet_quantum_limit, mermin_limit = Inequalities.get_limits(N)
-    criterium = 0.9 * svet_quantum_limit
+    #classical, svet_quantum_limit, mermin, mermin_quantum_limit = Inequalities.get_violation_thresholds(N)
+    dic = Inequalities.get_loc_violation_thresholds(N)
+
+    thres = dic[INEQ_TYPE]
+    high_criterium = 0.9 * thres
 
     rank = int(os.getenv('RANK', -1))
     num_workers = int(os.getenv('WORLD_SIZE', -1))
@@ -192,10 +195,12 @@ def main():
 
     if rank == 0:     
         global_start_time = time.time()
-        print("Svetlichny Quantum Limit: ", svet_quantum_limit)
-        print("Mermin Limit: ", mermin_limit)
-        print("Our Criterium of high: ", criterium)
-        print("Classical Limit: ", classical)
+        print("Classical threshold: ", dic['svet'])
+        print("Svetlichny Quantum Limit: ", dic['svet_lim'])
+        print("Our Criterium of high Svet: ", high_criterium)
+        print("Mermin threshold: ", dic['mer'])
+        print("Mermin Quantum Limit: ", dic['mer_lim'])
+        
         print()
 
         for r in range(num_workers):
@@ -228,7 +233,7 @@ def main():
                                              state_lock, vio_lock, hVio_lock,
                                              states_fSave_lock, vio_fSave_lock, hVio_fSave_lock,
                                              rank, current_rank_attempts, gpu, 
-                                             INEQ_TYPE, seeds, batch_size, circ_params, criterium, classical))
+                                             INEQ_TYPE, seeds, batch_size, circ_params, high_criterium, thres))
         processes.append(p)
         p.start()
 
@@ -246,11 +251,11 @@ def main():
         print(f"Violations: {len(list(shared_vio))}")
         print(f"High violation: {len(list(shared_hVio))}")
     
-        save_to_tempfile(list(shared_states), f'Results/data_{N}.json')
-        save_to_tempfile(list(shared_vio), f'Results/violations_{N}.json')
-        save_to_tempfile(list(shared_vio), f'Results/high_violations_{N}.json')
+        save_to_tempfile(list(shared_states), f'Results/data_{N}_{INEQ_TYPE}.json')
+        save_to_tempfile(list(shared_vio), f'Results/violations_{N}_{INEQ_TYPE}.json')
+        save_to_tempfile(list(shared_vio), f'Results/high_violations_{N}_{INEQ_TYPE}.json')
 
-        d = pd.read_json(f'Results/data_{N}.json')
+        d = pd.read_json(f'Results/data_{N}_{INEQ_TYPE}.json')
         print(f"Number of States in file: {len(d)}")
 
 
