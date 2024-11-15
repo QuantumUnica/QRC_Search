@@ -1,6 +1,6 @@
 import warnings
 warnings.filterwarnings('ignore') 
-import os
+import os, sys
 import json
 import socket
 import argparse
@@ -99,7 +99,7 @@ def worker(shared_state_list, shared_vio, shared_hVio,
             optimizer = optim.Adam([initial_guess], lr=0.3)
 
             # Optimization loop
-            for _ in range(20):  # Number of epochs
+            for _ in range(10):  # Number of epochs
                 def closure():
                     optimizer.zero_grad()
                     loss = f(initial_guess)
@@ -167,7 +167,7 @@ def main():
     parser.add_argument("--q_dev", help="Select a quantum device", choices=['Clifford', 'Clifford+T', 'Aria1', 'Forte1', 'Garnet', 'Righetti'], default='Aria1')
     parser.add_argument("--depth", help="Circuit depth", type=int, default=None)
     parser.add_argument("--max_gates", help="Maximum number of gates per layer", type=int, default=2)
-    parser.add_argument("--ineq", help="Select Svetlichny or Mermi ineq.", choices=['svet', 'mer'], default='svet')
+    parser.add_argument("--ineq", help="Select Svetlichny, CHSH, or Mermin ineq.", choices=['svet', 'mer', 'chsh'], default='svet')
     parser.add_argument("--n_qubits", help="Number of qubits", type=int, required=True)
     parser.add_argument("--n_attempts", help="Number of attempted searches", type=int, required=True)
     parser.add_argument("--n_seeds", help="Number of seeds for each attempt", type=int, default=5)
@@ -179,20 +179,29 @@ def main():
     INEQ_TYPE = args.ineq    
     gpu = args.gpu
 
-    N = args.n_qubits                        # Number of qubits
-    seeds = args.n_seeds                               # Number of angle configurations for each quantum state
+    N = args.n_qubits                       # Number of qubits
+    seeds = args.n_seeds                    # Number of angle configurations for each quantum state
     n_attempts = args.n_attempts            # Total number of state analysis attempts
     batch_size = 50                         # used to save every 'save_batch_size' attempts
     
+    
+    if INEQ_TYPE == 'chsh' and N != 2:
+        raise ValueError("chsh ineq_type can be applied only for 2 qubits states")
+
+    if INEQ_TYPE == 'svet' and N <= 2:
+        raise ValueError("svet ineq_type can be applied only for more than 2 qubits")
+
+
     global_attempts = list(range(n_attempts))
 
-     # Definition of violation level criteria for non locality
-    #classical, svet_quantum_limit, mermin, mermin_quantum_limit = Inequalities.get_violation_thresholds(N)
+    # Definition of violation level criteria for non locality
     dic = Inequalities.get_loc_violation_thresholds(N)
 
     thres = dic[INEQ_TYPE]
-    high_criterium = 0.9 * dic['svet_lim']
-    
+
+    # As the high violation criterion is currently only defined for Svetlichny inequality, 
+    # with others inequalities, the threshold is set to a very high value, thus becoming effectively irrelevant
+    high_criterium = 1e5 if INEQ_TYPE != 'svet' else 0.9 * dic['svet_lim']     
 
     rank = int(os.getenv('RANK', -1))
     num_workers = int(os.getenv('WORLD_SIZE', -1))
@@ -201,11 +210,19 @@ def main():
 
     if rank == 0:     
         global_start_time = time.time()
-        print("Classical threshold: ", dic['svet'])
-        print("Svetlichny Quantum Limit: ", dic['svet_lim'])
-        print("Our Criterium of high Svet: ", high_criterium)
-        print("Mermin threshold: ", dic['mer'])
-        print("Mermin Quantum Limit: ", dic['mer_lim'])
+        
+        if INEQ_TYPE == 'svet': 
+            print("Classical Svetlichny threshold: ", dic['svet'])
+            print("Svetlichny Quantum Limit: ", dic['svet_lim'])
+            print("Our Criterium of high Svet: ", high_criterium)
+  
+        elif INEQ_TYPE == 'chsh':
+            print("CHSH threshold: ", dic['mer'])
+            print("CHSH Quantum Limit: ", dic['mer_lim'])
+  
+        elif INEQ_TYPE == 'mer':
+            print("Mermin threshold: ", dic['mer'])
+            print("Mermin Quantum Limit: ", dic['mer_lim'])
         
         print()
 
@@ -255,7 +272,9 @@ def main():
 
         print(f"States: {len(list(shared_states))}")
         print(f"Violations: {len(list(shared_vio))}")
-        print(f"High violation: {len(list(shared_hVio))}")
+        
+        if len(list(shared_hVio))>0:
+            print(f"High violation: {len(list(shared_hVio))}")
     
         save_to_tempfile(list(shared_states), f'Results/data_{N}_{INEQ_TYPE}.json')
         save_to_tempfile(list(shared_vio), f'Results/violations_{N}_{INEQ_TYPE}.json')
@@ -275,4 +294,22 @@ def main():
 
 if __name__ == "__main__":
 
-    main()
+    try:
+        # Initialize torch distributed (needed for torchrun execution)
+        if torch.distributed.is_initialized():
+            rank = torch.distributed.get_rank()
+        else:
+            rank = 0
+        
+        main()
+
+    except ValueError as e:
+        # Suppress the traceback and print a clean error message
+        print(f"Rank {rank}: Error: {e}", file=sys.stderr)
+        
+        # Prevent the torch.distributed stack trace from appearing by exiting cleanly
+        sys.exit(0)  # Exit with 0 to prevent 'torchrun' from triggering failure logs
+    except Exception as e:
+        # Catch any unexpected exceptions and suppress the full traceback
+        print(f"Rank {rank}: Unexpected error: {e}", file=sys.stderr)
+        sys.exit(0)  # Graceful exit with 0

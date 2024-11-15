@@ -146,11 +146,11 @@ def mermin_rec(angs, n, device):
     of the Mermin-Kyshko or Svetlichny observables applied to a state rho"
 """
 def get_expectation_value(ineq_type, rho, angs, device):     
-    assert ineq_type in ['mer', 'svet', 'chsh'],  'ineq_type parameter must be mer or svet'
+    assert ineq_type in ['mer', 'svet', 'chsh'],  'ineq_type parameter must be chsh, mer or svet'
 
     n = int(np.log2(np.shape(rho)[0]))   # n is the number of qubits
 
-    if ineq_type == 'mer':
+    if ineq_type == 'mer' or ineq_type == 'chsh':
         angs = torch.cat(angs, axis=0)
         me = mermin_iter(angs, n, device)[0]   
         expectation = -torch.trace(me @ rho).real
@@ -158,10 +158,6 @@ def get_expectation_value(ineq_type, rho, angs, device):
     elif ineq_type == 'svet':
         sv = svetlichny_iter(rho, n, angs, device)
         expectation = -torch.sqrt((torch.trace(sv @ rho).real) ** 2)
-    
-    elif ineq_type == 'chsh':
-        bell = chsh(angs, device)
-        expectation = -torch.sqrt((torch.trace(bell @ rho).real)**2)
         
     return expectation
 
@@ -172,18 +168,23 @@ def get_loc_violation_thresholds(n_particles):
     classical = 2**(N-1)
     svet_quantum_limit = classical * np.sqrt(2)
     mermin = 1
-    chsh = 2
 
     if N%2==0: 
-        mermin_quantum_limit=2**(N-2/2)      
+        mermin_quantum_limit=(2**((N-2)/2))*np.sqrt(2)
     if N%2!=0:
         mermin_quantum_limit=2**((N-1)/2)
 
-    thresh = {'svet':classical,
-         'svet_lim':svet_quantum_limit,
-         'mer':mermin,
-         'mer_lim': mermin_quantum_limit,
-         'chsh': chsh}
+    if N==2:
+        thresh = {'chsh': mermin,
+                  'chsh_lim': mermin_quantum_limit,
+                  'mer': mermin,
+                  'mer_lim': mermin_quantum_limit}
+    
+    else:
+        thresh = {'svet':classical,
+                  'svet_lim':svet_quantum_limit,
+                  'mer':mermin,
+                  'mer_lim': mermin_quantum_limit}
 
     return thresh
 
