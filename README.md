@@ -87,4 +87,17 @@ Use 127.0.0.1 as master address to run locally.
 ```bash
 torchrun --nproc_per_node 4 --nnodes 1 --node_rank 0 --master_addr 127.0.0.1 --master_port 12355 \
 QRC_Search.py --q_dev Aria1 --depth 25 --max_gates 2 --ineq svet --n_qubits 3 --n_attempts 100 --n_seeds 7 --gpu
+```
+
+## Main Author
+
+- **Andrés Camilo Granda Arango** - [GitHub Profile](https://github.com/agrandaarango)
+
+## Collaborators
+
+- **Federico Hernan Holik** - [GitHub Profile](https://github.com/olentiev2)
+- **Giuseppe Sergioli** - [GitHub Profile](https://github.com/GiuseppeSergioli)
+- **Carlo Cuccu** - [GitHub Profile](https://github.com/carlocuccu)
+- **Lenin Orlando Granda Arango** - [GitHub Profile](https://github.com/logranda)
+
 
