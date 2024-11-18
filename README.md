@@ -97,6 +97,7 @@ QRC_Search.py --q_dev Aria1 --depth 25 --max_gates 2 --ineq svet --n_qubits 3 --
 
 - **Federico Hernan Holik** - [GitHub Profile](https://github.com/olentiev2)
 - **Giuseppe Sergioli** - [GitHub Profile](https://github.com/GiuseppeSergioli)
+- **Roberto Giuntini**
 - **Carlo Cuccu** - [GitHub Profile](https://github.com/carlocuccu)
 - **Lenin Orlando Granda Arango** - [GitHub Profile](https://github.com/logranda)
 
