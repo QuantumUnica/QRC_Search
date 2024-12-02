@@ -17,6 +17,12 @@ def sign(t):
     s = torch.sum(t == 1).item()
     return s
 
+def are_valid_angles(t):
+    lower_bound = 0
+    upper_bound = 2 * torch.pi
+    is_in_range = torch.all((t >= lower_bound) & (t <= upper_bound))
+    return is_in_range.item()
+
 
 """
     To produce a GHZ state
