@@ -17,8 +17,8 @@ import torch.multiprocessing as mp
 from torch import optim
 
 from QRC import QRC_Device
-import Inequalities 
-
+import Inequalities
+from Optimizer import Optimizer
 
 
 def save_to_tempfile(data, filename):
@@ -90,38 +90,37 @@ def worker(shared_state_list, shared_vio, shared_hVio,
         # Run seeds searches for each RHO
         for _ in range(seeds):
 
-            def f(ang):
+            def loss_function(ang):
                 angles = [ang[4 * i:4 * (i + 1)] for i in range(N)]
                 v = Inequalities.get_expectation_value(INEQ_TYPE, rho, angles, device)
                 return v
 
-            initial_guess = torch.tensor([2 * m.pi * random.random() for _ in range(4 * N)], requires_grad=True, device=device)
-            optimizer = optim.Adam([initial_guess], lr=0.3)
+            initial_guess = [2 * m.pi * random.random() for _ in range(4 * N)]
+            opt = Optimizer(loss_function, initial_guess, dev=device)
+            
+            start_time = time.time()
+            opt.optimize(epochs=100)            # Optimization call
+            end_time = time.time()
 
-            # Optimization loop
-            for _ in range(10):  # Number of epochs
-                def closure():
-                    optimizer.zero_grad()
-                    loss = f(initial_guess)
-                    loss.backward()
-                    return loss
-                optimizer.step(closure)
-                with torch.no_grad():
-                    initial_guess.clamp_(0, 2 * m.pi)   # Ensures parameters constraints
-
-            fitted_params = initial_guess
-            results.append([-f(fitted_params).to('cpu').detach().numpy(), fitted_params.to('cpu').detach().numpy()])
+            fitted_params = opt.weights
+            results.append([-loss_function(fitted_params).to('cpu').detach().numpy(), fitted_params.to('cpu').detach().numpy()])
 
         end_time = time.time()
         maximal_pair = max(enumerate(map(itemgetter(0), results)), key=itemgetter(1))
         item = results[maximal_pair[0]]
         violation_value = item[0]
+        angles = item[1].tolist()
 
         dict_ = {}
-        dict_["Violation"] = str(violation_value)
-        dict_["Angles"] = item[1].tolist()
-        dict_["Circuit_Instructions"] = [str(i) for i in circuit.instructions]
+        dict_["N_Qubit"] = circ_params['N']
         dict_["Depth"] = circ_params['D']
+        dict_["Max_Gates"] = circ_params['max_gates']
+
+        dict_["Violation"] = str(violation_value)
+        dict_["Starging_Angles"] = initial_guess
+        dict_["Optimal_Angles"] = angles
+        dict_["Device"] = circ_params['device_name']
+        dict_["Circuit_Instructions"] = [str(i) for i in circuit.instructions]
 
         num_total_processed_states = -1
         
@@ -184,7 +183,7 @@ def main():
     n_attempts = args.n_attempts            # Total number of state analysis attempts
     batch_size = 50                         # used to save every 'save_batch_size' attempts
     
-    
+
     if INEQ_TYPE == 'chsh' and N != 2:
         raise ValueError("chsh ineq_type can be applied only for 2 qubits states")
 
