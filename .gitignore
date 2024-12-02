@@ -1,3 +1,4 @@
 Results/*.json
 Local_History/
+__pycache__/
 PLAYGROUND.ipynb
