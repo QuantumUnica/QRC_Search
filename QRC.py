@@ -57,12 +57,7 @@ devices_info = {
         "gate_names_1q": ['prx'],  # Single-qubit gate specific to Garnet device
         "gate_names_2q": ['cz'],  # Controlled-Z two-qubit gate
         # Connectivity map indicating allowed qubit connections
-        "connectivity": {0: [1, 3], 1: [0, 4], 2: [3, 7], 3: [0, 2, 4, 8], 
-                         4: [1, 3, 5, 9], 5: [4, 6, 10], 6: [5, 11], 
-                         7: [2, 8, 12], 8: [3, 7, 9, 13], 9: [4, 8, 10, 14], 
-                         10: [5, 9, 11, 15], 11: [6, 10, 16], 12: [7, 13], 
-                         13: [8, 12, 14, 17], 14: [9, 13, 15, 18], 15: [10, 14, 16, 19], 
-                         16: [11, 15], 17: [13, 18], 18: [14, 17, 19], 19: [15, 18]},
+        "connectivity": None,
         # Noise model for Garnet device
         "noise_model": NoiseModel()
                          .add_noise(Depolarizing(0.004), GateCriteria(Gate.PRx))

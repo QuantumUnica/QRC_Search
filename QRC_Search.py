@@ -18,7 +18,7 @@ from torch import optim
 
 from QRC import QRC_Device
 import Inequalities
-from Optimizer import Optimizer
+from Optimizer import Optimizer_Constr_Mod, Optimizer_Constr_Clamp
 
 
 def save_to_tempfile(data, filename):
@@ -96,10 +96,10 @@ def worker(shared_state_list, shared_vio, shared_hVio,
                 return v
 
             initial_guess = [2 * m.pi * random.random() for _ in range(4 * N)]
-            opt = Optimizer(loss_function, initial_guess, dev=device)
+            opt = Optimizer_Constr_Mod(loss_function, initial_guess, dev=device)
             
             start_time = time.time()
-            opt.optimize(epochs=100)            # Optimization call
+            opt.optimize(epochs=10)            # Optimization call
             end_time = time.time()
 
             fitted_params = opt.weights
