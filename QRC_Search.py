@@ -66,7 +66,7 @@ def worker(shared_state_list, shared_vio, shared_hVio,
            lock_states, lock_vio, lock_hVio, lock_states_fSave, lock_vio_fSave, lock_hVio_fSave, 
            rank, 
            attempts, 
-           gpu, INEQ_TYPE, seeds, batch_size, circ_params, criterium, thres):
+           gpu, INEQ_TYPE, seeds, opt_epochs, batch_size, circ_params, criterium, thres):
 
     """Worker function that appends a dictionary to the shared list."""
     # Creazione di un dizionario con dati da aggiungere alla lista
@@ -99,7 +99,7 @@ def worker(shared_state_list, shared_vio, shared_hVio,
             opt = Optimizer_Constr_Mod(loss_function, initial_guess, dev=device)
             
             start_time = time.time()
-            opt.optimize(epochs=10)            # Optimization call
+            opt.optimize(epochs=opt_epochs)            # Optimization call
             end_time = time.time()
 
             fitted_params = opt.weights
@@ -170,6 +170,7 @@ def main():
     parser.add_argument("--n_qubits", help="Number of qubits", type=int, required=True)
     parser.add_argument("--n_attempts", help="Number of attempted searches", type=int, required=True)
     parser.add_argument("--n_seeds", help="Number of seeds for each attempt", type=int, default=5)
+    parser.add_argument("--opt_epochs", help="Number of iterations of the optimizer", type=int, default=5)
     parser.add_argument("--gpu", help="Use True to use the GPU", action='store_true')
 
     args=parser.parse_args()
@@ -181,6 +182,7 @@ def main():
     N = args.n_qubits                       # Number of qubits
     seeds = args.n_seeds                    # Number of angle configurations for each quantum state
     n_attempts = args.n_attempts            # Total number of state analysis attempts
+    opt_epochs = args.opt_epochs
     batch_size = 50                         # used to save every 'save_batch_size' attempts
     
 
@@ -255,7 +257,7 @@ def main():
                                              state_lock, vio_lock, hVio_lock,
                                              states_fSave_lock, vio_fSave_lock, hVio_fSave_lock,
                                              rank, current_rank_attempts, gpu, 
-                                             INEQ_TYPE, seeds, batch_size, circ_params, high_criterium, thres))
+                                             INEQ_TYPE, seeds, opt_epochs, batch_size, circ_params, high_criterium, thres))
         processes.append(p)
         p.start()
 
